@@ -28,7 +28,7 @@ O **Landscape Metrics Extractor** é uma aplicação web desenvolvida em Streaml
 
 ## 🚀 Demo Online
 
-Acesse a versão online da aplicação: **[Landscape Metrics Extractor](https://your-app-url.streamlit.app)**
+Acesse a versão online da aplicação: **[Landscape Metrics Extractor](https://higuchip-landscapemetrics-app-fqk94t.streamlit.app/)**
 
 ---
 
