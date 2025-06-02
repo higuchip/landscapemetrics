@@ -273,7 +273,7 @@ with st.sidebar:
         except:
             st.error("❌ GEE Desconectado")
 
-st.caption("⚠️ **Em desenvolvimento**")
+
 st.text(" ")
 st.markdown("---")
 
