@@ -164,16 +164,60 @@ def uploaded_file_to_gdf(data):
             with open(file_path, "wb") as file:
                 file.write(data.getbuffer())
             
-            # Lê o arquivo
-            if file_extension == ".kml":
-                gpd.io.file.fiona.drvsupport.supported_drivers["KML"] = "rw"
-                gdf = gpd.read_file(file_path, driver="KML")
-            else:
-                gdf = gpd.read_file(file_path)
+            # Lê o arquivo com tratamento específico para versões do fiona
+            try:
+                if file_extension == ".kml":
+                    # Para KML, força o driver específico
+                    try:
+                        import fiona
+                        fiona.supported_drivers['KML'] = 'rw'
+                    except:
+                        pass
+                    gdf = gpd.read_file(file_path, driver="KML")
+                else:
+                    # Para GeoJSON, lê normalmente
+                    gdf = gpd.read_file(file_path)
+                    
+            except Exception as read_error:
+                # Fallback: tenta ler como JSON puro e converter
+                logger.warning(f"Erro na leitura padrão: {read_error}. Tentando método alternativo...")
+                
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    geojson_data = json.load(f)
+                
+                # Converte JSON para GeoDataFrame manualmente
+                import shapely.geometry as geom
+                
+                features = geojson_data.get('features', [])
+                if not features:
+                    raise ValueError("Nenhuma feature encontrada no GeoJSON")
+                
+                geometries = []
+                properties_list = []
+                
+                for feature in features:
+                    # Cria geometria usando shapely
+                    geom_data = feature.get('geometry', {})
+                    if geom_data.get('type') == 'Point':
+                        coords = geom_data.get('coordinates', [])
+                        if len(coords) >= 2:
+                            geometry = geom.Point(coords[0], coords[1])
+                            geometries.append(geometry)
+                            properties_list.append(feature.get('properties', {}))
+                
+                if not geometries:
+                    raise ValueError("Nenhuma geometria válida encontrada")
+                
+                # Cria GeoDataFrame manualmente
+                gdf = gpd.GeoDataFrame(properties_list, geometry=geometries, crs='EPSG:4326')
             
             # Valida GeoDataFrame
             if gdf.empty:
                 raise ValueError("Arquivo GeoJSON vazio")
+            
+            # Garante que tem CRS definido
+            if gdf.crs is None:
+                gdf = gdf.set_crs('EPSG:4326')
             
             logger.info(f"Arquivo processado com sucesso: {len(gdf)} geometrias")
             return gdf
@@ -312,9 +356,24 @@ if data:
         with st.spinner("📂 Processando arquivo GeoJSON..."):
             gdf = uploaded_file_to_gdf(data)
 
-        # Converte para formato Earth Engine
-        gdf_json = gdf.to_json()
-        gdf_features = json.loads(gdf_json)["features"]
+        # Converte para formato Earth Engine com tratamento robusto
+        try:
+            # Primeiro tenta o método padrão do geemap
+            gdf_json = gdf.to_json()
+            gdf_features = json.loads(gdf_json)["features"]
+            
+        except Exception as json_error:
+            logger.warning(f"Erro na conversão JSON padrão: {json_error}. Tentando método alternativo...")
+            
+            # Método alternativo: converte manualmente
+            gdf_features = []
+            for idx, row in gdf.iterrows():
+                feature = {
+                    "type": "Feature",
+                    "geometry": json.loads(gpd.GeoSeries([row.geometry]).to_json())["features"][0]["geometry"],
+                    "properties": {k: v for k, v in row.items() if k != 'geometry' and pd.notna(v)}
+                }
+                gdf_features.append(feature)
         
         # Valida que há apenas um ponto
         if len(gdf_features) > 1:
@@ -324,10 +383,21 @@ if data:
             st.error("❌ Nenhum ponto encontrado no arquivo. Verifique o arquivo GeoJSON.")
             st.stop()
         
-        # Cria ROI e buffer
+        # Cria ROI e buffer com tratamento de erro
         with st.spinner("🌍 Preparando área de interesse..."):
-            roi = ee.FeatureCollection(gdf_features)
-            roi_buffer = roi.geometry().buffer(buffer_dist)
+            try:
+                roi = ee.FeatureCollection(gdf_features)
+                roi_buffer = roi.geometry().buffer(buffer_dist)
+                
+                # Testa se a geometria é válida
+                roi_area = roi.geometry().area().getInfo()
+                if roi_area is None or roi_area <= 0:
+                    raise ValueError("Geometria inválida ou área zero")
+                    
+            except Exception as roi_error:
+                logger.error(f"Erro ao criar ROI: {roi_error}")
+                st.error("❌ Erro ao processar a geometria do ponto. Verifique se o arquivo GeoJSON contém um ponto válido.")
+                st.stop()
         
         # Layout em duas colunas para visualização
         col1, col2 = st.columns(2)
