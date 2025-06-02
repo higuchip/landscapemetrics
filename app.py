@@ -676,7 +676,7 @@ if data:
                 # Processa índices das classes
                 classes_index = list(map(int, class_metrics_df.index))
                 
-                # Dicionário de legendas MapBiomas
+                # Dicionário de legendas MapBiomas completo
                 legend_keys = [
                     ' ',  # 0
                     'Floresta',  # 1
@@ -692,6 +692,23 @@ if data:
                     'Outras formacoes nao-florestais',  # 13
                     'Agropecuaria',  # 14
                     'Pastagem',  # 15
+                    ' ', ' ',  # 16-17
+                    'Agricultura',  # 18
+                    'Agricultura temporarias',  # 19
+                    'Cana',  # 20
+                    'Mosaico de Agricultura e Pastagem',  # 21
+                    'Area nao Vegetada',  # 22
+                    'Dunas',  # 23
+                    'Area Urbanizada',  # 24
+                    'Outras areas nao vegetadas',  # 25
+                    'Agua',  # 26
+                    'Nao Observado',  # 27
+                    ' ',  # 28
+                    'Afloramento rochoso',  # 29
+                    'Mineracao',  # 30
+                    'Aquicultura',  # 31
+                    'Sal',  # 32
+                    'Rio, lago e oceano',  # 33
                     ' ', ' ',  # 34-35
                     'Lavoura Perene',  # 36
                     ' ', ' ',  # 37-38
@@ -819,21 +836,4 @@ references = [
 for ref in references:
     st.markdown(f"• {ref}")
 
-st.markdown("---") 16-17
-                    'Agricultura',  # 18
-                    'Agricultura temporarias',  # 19
-                    'Cana',  # 20
-                    'Mosaico de Agricultura e Pastagem',  # 21
-                    'Area nao Vegetada',  # 22
-                    'Dunas',  # 23
-                    'Area Urbanizada',  # 24
-                    'Outras areas nao vegetadas',  # 25
-                    'Agua',  # 26
-                    'Nao Observado',  # 27
-                    ' ',  # 28
-                    'Afloramento rochoso',  # 29
-                    'Mineracao',  # 30
-                    'Aquicultura',  # 31
-                    'Sal',  # 32
-                    'Rio, lago e oceano',  # 33
-                    ' ', ' ',  #
+st.markdown("---")
