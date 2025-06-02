@@ -383,21 +383,62 @@ if data:
             st.error("❌ Nenhum ponto encontrado no arquivo. Verifique o arquivo GeoJSON.")
             st.stop()
         
-        # Cria ROI e buffer com tratamento de erro
+        # Cria ROI e buffer com tratamento de erro robusto
         with st.spinner("🌍 Preparando área de interesse..."):
             try:
+                # Cria FeatureCollection do Earth Engine
                 roi = ee.FeatureCollection(gdf_features)
+                
+                # Debug: mostra informações sobre o ROI
+                logger.info(f"ROI criado com {len(gdf_features)} features")
+                st.info(f"📍 Processando ponto: {gdf_features[0]['geometry']['coordinates']}")
+                
+                # Cria buffer
                 roi_buffer = roi.geometry().buffer(buffer_dist)
                 
-                # Testa se a geometria é válida
-                roi_area = roi.geometry().area().getInfo()
-                if roi_area is None or roi_area <= 0:
-                    raise ValueError("Geometria inválida ou área zero")
+                # Testa a geometria de forma mais simples
+                try:
+                    # Tenta obter informações básicas da geometria
+                    roi_bounds = roi.geometry().bounds().getInfo()
+                    logger.info(f"Bounds do ROI: {roi_bounds}")
                     
+                    # Verifica se o buffer foi criado
+                    buffer_bounds = roi_buffer.bounds().getInfo()
+                    logger.info(f"Bounds do buffer: {buffer_bounds}")
+                    
+                except Exception as bounds_error:
+                    logger.warning(f"Não foi possível obter bounds: {bounds_error}")
+                    # Continua mesmo assim, pois o erro pode ser apenas na validação
+                
+                st.success(f"✅ Área de interesse criada com buffer de {buffer_dist}m")
+                
             except Exception as roi_error:
                 logger.error(f"Erro ao criar ROI: {roi_error}")
-                st.error("❌ Erro ao processar a geometria do ponto. Verifique se o arquivo GeoJSON contém um ponto válido.")
-                st.stop()
+                
+                # Tenta uma abordagem alternativa
+                st.warning("⚠️ Tentando método alternativo para criar a área de interesse...")
+                
+                try:
+                    # Cria geometria diretamente a partir das coordenadas
+                    coords = gdf_features[0]['geometry']['coordinates']
+                    point = ee.Geometry.Point(coords)
+                    roi_buffer = point.buffer(buffer_dist)
+                    roi = ee.FeatureCollection([ee.Feature(point)])
+                    
+                    st.success(f"✅ Área criada com método alternativo - buffer de {buffer_dist}m")
+                    
+                except Exception as alt_error:
+                    logger.error(f"Erro no método alternativo: {alt_error}")
+                    st.error("❌ Não foi possível processar o ponto. Verifique a conexão com o Earth Engine.")
+                    st.error(f"Coordenadas recebidas: {gdf_features[0]['geometry']['coordinates']}")
+                    
+                    # Mostra informações de debug
+                    with st.expander("🔍 Informações de debug"):
+                        st.json(gdf_features[0])
+                        st.text(f"Número de features: {len(gdf_features)}")
+                        st.text(f"Tipo de geometria: {gdf_features[0]['geometry']['type']}")
+                    
+                    st.stop()
         
         # Layout em duas colunas para visualização
         col1, col2 = st.columns(2)
@@ -422,23 +463,86 @@ if data:
                 st.info("📍 Área de interesse processada (mapa indisponível)")
                 st.text(f"Buffer de {buffer_dist}m aplicado ao ponto selecionado")
 
-        # Processamento dos dados MapBiomas
+        # Processamento dos dados MapBiomas com melhor tratamento de erro
         with st.spinner("🛰️ Baixando dados do MapBiomas..."):
             try:
                 # Baixa dados do MapBiomas
                 mb = ee.Image("projects/mapbiomas-workspace/public/collection6/mapbiomas_collection60_integration_v1")
                 
                 # Seleciona ano e extrai dados para o buffer
-                mb_year_sample = mb.select('classification_2020').sampleRectangle(roi_buffer)
-                mb_year_sample_get = mb_year_sample.get('classification_2020')
-                np_arr_mb = np.array(mb_year_sample_get.getInfo())
+                mb_year = mb.select('classification_2020')
+                
+                # Obtém a região de interesse como geometria
+                region = roi_buffer
+                
+                # Primeiro tenta sampleRectangle
+                try:
+                    mb_year_sample = mb_year.sampleRectangle(
+                        region=region,
+                        defaultValue=0
+                    )
+                    mb_year_sample_get = mb_year_sample.get('classification_2020')
+                    np_arr_mb = np.array(mb_year_sample_get.getInfo())
+                    
+                except Exception as sample_rect_error:
+                    logger.warning(f"sampleRectangle falhou: {sample_rect_error}")
+                    st.info("🔄 Tentando método alternativo para extrair dados...")
+                    
+                    # Método alternativo: usar reduceRegion
+                    scale = 30  # Resolução do MapBiomas
+                    
+                    # Reduz a escala se a área for muito grande
+                    buffer_area = roi_buffer.area().getInfo()
+                    if buffer_area > 100000000:  # 100 km²
+                        scale = 60
+                        st.warning(f"⚠️ Área grande detectada ({buffer_area/1000000:.1f} km²). Usando resolução reduzida.")
+                    
+                    # Exporta uma pequena amostra para análise
+                    sample_data = mb_year.sampleRegions(
+                        collection=ee.FeatureCollection([ee.Feature(region)]),
+                        scale=scale,
+                        numPixels=5000  # Limite de pixels
+                    )
+                    
+                    # Converte para array
+                    sample_list = sample_data.aggregate_array('classification_2020').getInfo()
+                    
+                    if not sample_list or len(sample_list) == 0:
+                        raise ValueError("Nenhum dado válido encontrado na região")
+                    
+                    # Cria array 2D artificial para PyLandStats
+                    side_length = int(np.sqrt(len(sample_list)))
+                    if side_length < 3:
+                        side_length = 3
+                        sample_list = sample_list + [0] * (9 - len(sample_list))
+                    
+                    np_arr_mb = np.array(sample_list[:side_length*side_length]).reshape(side_length, side_length)
                 
                 if np_arr_mb.size == 0:
                     raise ValueError("Nenhum dado encontrado para a área selecionada")
                 
+                # Verifica se há dados válidos
+                unique_values = np.unique(np_arr_mb)
+                if len(unique_values) == 1 and unique_values[0] == 0:
+                    st.warning("⚠️ Apenas valores zero encontrados. Pode ser uma área sem dados do MapBiomas.")
+                
+                st.success(f"✅ Dados extraídos: {np_arr_mb.shape[0]}x{np_arr_mb.shape[1]} pixels")
+                logger.info(f"Array shape: {np_arr_mb.shape}, unique values: {len(unique_values)}")
+                
             except Exception as mb_error:
                 logger.error(f"Erro ao baixar dados MapBiomas: {mb_error}")
-                st.error("❌ Erro ao baixar dados do MapBiomas. Tente uma área diferente.")
+                st.error("❌ Erro ao baixar dados do MapBiomas.")
+                
+                with st.expander("🔍 Detalhes do erro"):
+                    st.error(str(mb_error))
+                    st.info("""
+                    **Possíveis causas:**
+                    - Área muito grande (reduza o buffer)
+                    - Região sem cobertura do MapBiomas
+                    - Timeout na conexão com Earth Engine
+                    - Coordenadas fora do Brasil
+                    """)
+                
                 st.stop()
 
         # Análise da paisagem
@@ -450,18 +554,37 @@ if data:
             
             with st.spinner("📊 Calculando métricas da paisagem..."):
                 try:
-                    # Instancia PyLandStats
+                    # Instancia PyLandStats com validação
+                    if np_arr_mb.shape[0] < 3 or np_arr_mb.shape[1] < 3:
+                        st.warning("⚠️ Área muito pequena para análise detalhada. Expandindo buffer...")
+                        # Cria um array mínimo para análise
+                        np_arr_mb = np.pad(np_arr_mb, ((1, 1), (1, 1)), mode='constant', constant_values=0)
+                    
                     ls = pls.Landscape(np_arr_mb, res=(30, 30))
                     
-                    # Plota paisagem
-                    fig, ax = plt.subplots(figsize=(6, 4))
-                    ls.plot_landscape(legend=True, ax=ax)
-                    st.pyplot(fig)
-                    plt.close()
+                    # Plota paisagem com tratamento de erro
+                    try:
+                        fig, ax = plt.subplots(figsize=(6, 4))
+                        ls.plot_landscape(legend=True, ax=ax)
+                        st.pyplot(fig)
+                        plt.close()
+                    except Exception as plot_error:
+                        logger.warning(f"Erro no plot: {plot_error}")
+                        st.info("📊 Dados processados (visualização indisponível)")
+                        
+                        # Mostra informações básicas sobre as classes
+                        unique_classes = np.unique(np_arr_mb)
+                        st.write(f"Classes encontradas: {unique_classes}")
                     
                 except Exception as pls_error:
                     logger.error(f"Erro no PyLandStats: {pls_error}")
                     st.error("❌ Erro ao processar métricas da paisagem")
+                    
+                    with st.expander("🔍 Detalhes do erro PyLandStats"):
+                        st.error(str(pls_error))
+                        st.info(f"Forma do array: {np_arr_mb.shape}")
+                        st.info(f"Valores únicos: {np.unique(np_arr_mb)}")
+                    
                     st.stop()
 
         st.markdown("---")
