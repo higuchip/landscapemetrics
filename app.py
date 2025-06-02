@@ -1,5 +1,14 @@
 # Instalacao de bibliotecas necessarias
 import streamlit as st
+
+# IMPORTANTE: st.set_page_config() DEVE ser a primeira função Streamlit
+st.set_page_config(
+    page_title="Landscape Metrics Extractor",
+    page_icon="🏞️",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
 import geemap.foliumap as geemap
 from streamlit_folium import st_folium
 import json
@@ -185,15 +194,7 @@ def uploaded_file_to_gdf(data):
 if not initialize_ee():
     st.stop()
 
-# Configuração da página
-st.set_page_config(
-    page_title="Landscape Metrics Extractor",
-    page_icon="🏞️",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
-
-# Header
+# Header principal
 col1, col2 = st.columns([2, 3])
 
 with col1:
@@ -243,19 +244,36 @@ st.warning(
 )
 
 # Mapa para seleção de pontos
-Map = geemap.Map(
-    center=[-15.7801, -47.9292], 
-    zoom=5, 
-    Draw_export=True,
-    plugin_Draw=True,
-    plugin_LatLngPopup=False
-)
-Map.add_basemap("HYBRID")
+try:
+    Map = geemap.Map(
+        center=[-15.7801, -47.9292], 
+        zoom=5, 
+        Draw_export=True,
+        plugin_Draw=True,
+        plugin_LatLngPopup=False
+    )
+    Map.add_basemap("HYBRID")
 
-# Container para o mapa
-map_container = st.container()
-with map_container:
-    map_data = st_folium(Map, width=700, height=400, returned_objects=["last_clicked", "all_drawings"])
+    # Container para o mapa
+    map_container = st.container()
+    with map_container:
+        map_data = st_folium(Map, width=700, height=400, returned_objects=["last_clicked", "all_drawings"])
+
+except Exception as map_error:
+    logger.error(f"Erro ao criar mapa: {map_error}")
+    st.error("❌ Erro ao carregar o mapa. Verifique a conexão com o Earth Engine.")
+    
+    # Mapa alternativo simples
+    st.info("🗺️ Carregando mapa alternativo...")
+    try:
+        import folium
+        m = folium.Map(location=[-15.7801, -47.9292], zoom_start=5)
+        folium.Marker([-15.7801, -47.9292], popup="Exemplo de localização").add_to(m)
+        st_folium(m, width=700, height=400)
+        st.warning("⚠️ Use o mapa acima como referência e carregue um arquivo GeoJSON manualmente.")
+    except Exception as folium_error:
+        logger.error(f"Erro no mapa alternativo: {folium_error}")
+        st.error("❌ Não foi possível carregar nenhum mapa. Prossiga diretamente para o upload do arquivo GeoJSON.")
 
 st.markdown("---")
 
@@ -321,12 +339,18 @@ if data:
             )
             
             # Mapa da área de interesse
-            roi_map = geemap.Map()
-            roi_map.add_basemap("HYBRID")
-            roi_map.centerObject(roi, zoom=11)
-            roi_map.addLayer(roi_buffer, {}, "ROI Buffer")
-            
-            st_folium(roi_map, width=400, height=300)
+            try:
+                roi_map = geemap.Map()
+                roi_map.add_basemap("HYBRID")
+                roi_map.centerObject(roi, zoom=11)
+                roi_map.addLayer(roi_buffer, {}, "ROI Buffer")
+                
+                st_folium(roi_map, width=400, height=300)
+                
+            except Exception as roi_map_error:
+                logger.warning(f"Erro ao criar mapa ROI: {roi_map_error}")
+                st.info("📍 Área de interesse processada (mapa indisponível)")
+                st.text(f"Buffer de {buffer_dist}m aplicado ao ponto selecionado")
 
         # Processamento dos dados MapBiomas
         with st.spinner("🛰️ Baixando dados do MapBiomas..."):
